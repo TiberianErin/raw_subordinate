@@ -51,6 +51,7 @@ def _load_preset_settings(file_path=PRESET_SETTINGS_FILE):
         "timeout_image": "",
         "working_image": "",
         "offline_image": "",
+        "app_icon_path": "",
     }
     if not os.path.exists(file_path):
         return defaults, False
@@ -645,6 +646,7 @@ class RawSubordinateApp(tk.Tk):
         self.tray_icon = None
         self.tray_visible = False
         self.tray_image = None
+        self.app_icon_image = None
 
         preset, loaded_preset = _load_preset_settings()
         self.peer_name_var = tk.StringVar(value=str(preset.get("peer_name", "Unnamed Peer")))
@@ -655,11 +657,13 @@ class RawSubordinateApp(tk.Tk):
         self.timeout_image_var = tk.StringVar(value=str(preset.get("timeout_image", "")))
         self.working_image_var = tk.StringVar(value=str(preset.get("working_image", "")))
         self.offline_image_var = tk.StringVar(value=str(preset.get("offline_image", "")))
+        self.app_icon_var = tk.StringVar(value=str(preset.get("app_icon_path", "")))
 
         self.status_var = tk.StringVar(value="Idle")
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_max = 1
 
+        self._apply_app_icon()
         self._build_ui()
         self.after(80, self._process_events)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
@@ -733,6 +737,7 @@ class RawSubordinateApp(tk.Tk):
         images_frame.columnconfigure(1, weight=1)
         images_frame.columnconfigure(3, weight=1)
 
+        self._add_icon_picker(images_frame, 0)
         self._add_image_picker(images_frame, 0, "Idle", self.idle_image_var, "idle")
         self._add_image_picker(images_frame, 1, "Timed Out", self.timeout_image_var, "timeout")
         self._add_image_picker(images_frame, 2, "Working", self.working_image_var, "working")
@@ -774,9 +779,18 @@ class RawSubordinateApp(tk.Tk):
             self.tray_button.configure(state="disabled")
 
     def _add_image_picker(self, parent, row, label, var, kind):
-        ttk.Label(parent, text=f"{label} Image:").grid(row=row, column=0, sticky="w", padx=8, pady=4)
-        ttk.Entry(parent, textvariable=var, width=32).grid(row=row, column=1, sticky="ew", padx=(0, 6), pady=4)
+        ttk.Label(parent, text=f"{label} Image:").grid(row=row + 1, column=0, sticky="w", padx=8, pady=4)
+        ttk.Entry(parent, textvariable=var, width=32).grid(row=row + 1, column=1, sticky="ew", padx=(0, 6), pady=4)
         ttk.Button(parent, text="Browse", command=lambda: self._browse_image(kind)).grid(
+            row=row + 1, column=2, sticky="w", padx=(0, 8), pady=4
+        )
+
+    def _add_icon_picker(self, parent, row):
+        ttk.Label(parent, text="App Icon (optional):").grid(row=row, column=0, sticky="w", padx=8, pady=4)
+        ttk.Entry(parent, textvariable=self.app_icon_var, width=32).grid(
+            row=row, column=1, sticky="ew", padx=(0, 6), pady=4
+        )
+        ttk.Button(parent, text="Browse", command=self._browse_app_icon).grid(
             row=row, column=2, sticky="w", padx=(0, 8), pady=4
         )
 
@@ -796,6 +810,15 @@ class RawSubordinateApp(tk.Tk):
             self.working_image_var.set(file_path)
         elif kind == "offline":
             self.offline_image_var.set(file_path)
+
+    def _browse_app_icon(self):
+        file_path = filedialog.askopenfilename(
+            title="Select app icon",
+            filetypes=[("Icon Files", "*.ico;*.png;*.gif"), ("All Files", "*.*")],
+        )
+        if file_path:
+            self.app_icon_var.set(file_path)
+            self._apply_app_icon()
 
     def _queue_event(self, event):
         self.event_queue.put(event)
@@ -829,6 +852,41 @@ class RawSubordinateApp(tk.Tk):
         self.log.insert("end", message + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def _resolve_icon_path(self, path):
+        if not path:
+            return ""
+        raw = str(path).strip()
+        if not raw:
+            return ""
+        if not os.path.isabs(raw):
+            raw = os.path.abspath(raw)
+        return raw
+
+    def _apply_app_icon(self):
+        icon_path = self._resolve_icon_path(self.app_icon_var.get())
+        if not icon_path or not os.path.exists(icon_path):
+            for candidate in (
+                os.path.join(BASE_DIR, "assets", "app_icon.ico"),
+                os.path.join(BASE_DIR, "assets", "app_icon.png"),
+                os.path.join(BASE_DIR, "assets", "tray_icon.ico"),
+                os.path.join(BASE_DIR, "assets", "tray_icon.png"),
+            ):
+                if os.path.exists(candidate):
+                    icon_path = os.path.abspath(candidate)
+                    break
+        if not icon_path or not os.path.exists(icon_path):
+            return
+        ext = os.path.splitext(icon_path)[1].lower()
+        try:
+            if ext == ".ico":
+                self.iconbitmap(icon_path)
+                return
+            icon_image = tk.PhotoImage(file=icon_path)
+            self.app_icon_image = icon_image
+            self.iconphoto(True, icon_image)
+        except tk.TclError:
+            pass
 
     def _build_peer_image_payload(self, path):
         if not path:
@@ -950,6 +1008,7 @@ class RawSubordinateApp(tk.Tk):
             "timeout_image": str(self.timeout_image_var.get()).strip(),
             "working_image": str(self.working_image_var.get()).strip(),
             "offline_image": str(self.offline_image_var.get()).strip(),
+            "app_icon_path": str(self.app_icon_var.get()).strip(),
         }
         try:
             _save_preset_settings(payload)
